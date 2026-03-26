@@ -112,3 +112,42 @@ elif choice == "✏️ Corregir Datos":
                              adelanto_cliente=?, adelanto_suplidor=?, estado=? WHERE id=?''', 
                           (nuevo_pv, nuevo_cf, nuevo_ac, nuevo_as, nuevo_estado, id_p))
                 conn.commit()
+                st.success(f"¡Datos del Proyecto {id_p} corregidos con éxito!")
+    else:
+        st.warning("No hay proyectos para modificar.")
+
+# --- OPCIÓN 5: GASTOS VARIOS ---
+elif choice == "Gastos Varios":
+    st.header("⛽ Gastos de Operación")
+    with st.form("form_gastos"):
+        concepto = st.text_input("Concepto")
+        monto_g = st.number_input("Monto ($)", min_value=0.0)
+        if st.form_submit_button("Registrar Gasto"):
+            fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+            c.execute("INSERT INTO gastos_varios (fecha, concepto, monto) VALUES (?,?,?)", (fecha_hoy, concepto, monto_g))
+            conn.commit()
+            st.success("Gasto registrado.")
+    df_g = pd.read_sql("SELECT * FROM gastos_varios", conn)
+    st.dataframe(df_g, use_container_width=True)
+
+# --- OPCIÓN 6: REPORTES ---
+elif choice == "Reportes y Respaldo":
+    st.header("📊 Resumen Financiero")
+    df = pd.read_sql("SELECT * FROM proyectos", conn)
+    df_g = pd.read_sql("SELECT * FROM gastos_varios", conn)
+    if not df.empty:
+        df['Cobro Pendiente'] = df['precio_venta'] - df['adelanto_cliente']
+        df['Pago Pendiente'] = df['costo_fabrica'] - df['adelanto_suplidor']
+        t1, t2, t3 = st.tabs(["👥 Clientes", "🏭 Fábricas", "📉 Balance"])
+        with t1:
+            res_c = df.groupby('cliente')['Cobro Pendiente'].sum().reset_index()
+            st.table(res_c[res_c['Cobro Pendiente'] > 0])
+        with t2:
+            res_s = df.groupby('suplidor')['Pago Pendiente'].sum().reset_index()
+            st.table(res_s[res_s['Pago Pendiente'] > 0])
+        with t3:
+            utilidad = df['precio_venta'].sum() - df['costo_fabrica'].sum()
+            gastos = df_g['monto'].sum() if not df_g.empty else 0
+            st.metric("Utilidad Neta Actual", f"${utilidad - gastos:,.2f}")
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Descargar Respaldo", csv, "respaldo.csv")
