@@ -23,7 +23,7 @@ c.execute('''CREATE TABLE IF NOT EXISTS gastos_varios
              (id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, concepto TEXT, monto REAL)''')
 conn.commit()
 
-st.set_page_config(page_title="Mueblería Pro - Finanzas", layout="wide")
+st.set_page_config(page_title="Mueblería Pro - Gestión Total", layout="wide")
 
 # --- MENÚ LATERAL ---
 st.sidebar.title("🛠️ Gestión de Negocio")
@@ -78,16 +78,18 @@ elif choice == "Pagos y Abonos":
             conn.commit()
             st.success(f"✅ {tipo} por ${monto:,.2f} registrado.")
 
-# --- OPCIÓN 4: CORREGIR DATOS ---
+# --- OPCIÓN 4: CORREGIR DATOS (EDICIÓN Y ELIMINACIÓN) ---
 elif choice == "✏️ Corregir Datos":
-    st.header("✏️ Editor Maestro")
+    st.header("✏️ Editor Maestro y Eliminación")
     df = pd.read_sql("SELECT * FROM proyectos", conn)
     if not df.empty:
         opciones = [f"ID {row['id']} - {row['cliente']}" for _, row in df.iterrows()]
-        selec = st.selectbox("Seleccione registro:", opciones)
+        selec = st.selectbox("Seleccione registro para editar o eliminar:", opciones)
         id_p = int(selec.split(" ")[1])
         p = df[df['id'] == id_p].iloc[0]
+        
         with st.form("edit_maestro"):
+            st.subheader(f"Editando Proyecto ID: {id_p}")
             n_cliente = st.text_input("Cliente", value=str(p['cliente']))
             n_mueble = st.text_area("Mueble", value=str(p['mueble']))
             n_suplidor = st.text_input("Suplidor", value=str(p['suplidor']))
@@ -97,39 +99,52 @@ elif choice == "✏️ Corregir Datos":
             n_ac = c1.number_input("Adelantos Cliente", value=float(p['adelanto_cliente']))
             n_as = c2.number_input("Pagos Fábrica", value=float(p['adelanto_suplidor']))
             n_est = st.selectbox("Estado", ["En Proceso", "Entregado"], index=0 if p['estado']=="En Proceso" else 1)
-            if st.form_submit_button("Guardar Cambios"):
+            
+            # Botones dentro del formulario
+            col_save, col_del = st.columns([1,1])
+            save_btn = col_save.form_submit_button("💾 GUARDAR CAMBIOS")
+            del_btn = col_del.form_submit_button("🗑️ ELIMINAR PROYECTO", type="secondary")
+            
+            if save_btn:
                 c.execute('''UPDATE proyectos SET cliente=?, mueble=?, suplidor=?, precio_venta=?, 
                              costo_fabrica=?, adelanto_cliente=?, adelanto_suplidor=?, estado=? WHERE id=?''',
                           (n_cliente.upper(), n_mueble, n_suplidor.upper(), n_pv, n_cf, n_ac, n_as, n_est, id_p))
                 conn.commit()
-                st.success("Registro actualizado.")
+                st.success("✅ Registro actualizado correctamente.")
+                st.rerun()
+
+            if del_btn:
+                # Al ser un botón de formulario, necesitamos una confirmación extra o ejecutar directo
+                c.execute("DELETE FROM proyectos WHERE id=?", (id_p,))
+                c.execute("DELETE FROM historial_pagos WHERE proyecto_id=?", (id_p,))
+                conn.commit()
+                st.warning(f"⚠️ El proyecto ID {id_p} ha sido eliminado permanentemente.")
+                st.rerun()
+    else:
+        st.info("No hay proyectos para editar.")
 
 # --- OPCIÓN 5: GASTOS VARIOS ---
 elif choice == "Gastos Varios":
     st.header("⛽ Gastos Operativos")
     with st.form("g"):
         col_a, col_b = st.columns(2)
-        con = col_a.text_input("Concepto (Gasolina, Herramientas, etc.)")
+        con = col_a.text_input("Concepto")
         mon = col_b.number_input("Monto ($)", min_value=0.0)
-        fec = st.date_input("Fecha del Gasto:", date.today())
+        fec = st.date_input("Fecha:", date.today())
         if st.form_submit_button("Registrar Gasto"):
             c.execute("INSERT INTO gastos_varios (fecha, concepto, monto) VALUES (?,?,?)", (fec.strftime("%Y-%m-%d"), con, mon))
             conn.commit()
             st.success("Gasto guardado.")
 
-# --- OPCIÓN 6: REPORTES Y ESTADO DE RESULTADOS ---
+# --- OPCIÓN 6: REPORTES ---
 elif choice == "Reportes y Respaldo":
     st.header("📊 Inteligencia Financiera")
-    
-    # FILTRO POR RANGO DE FECHAS
     st.sidebar.divider()
-    st.sidebar.subheader("Filtrar Reportes")
     f_inicio = st.sidebar.date_input("Fecha Inicio", date(date.today().year, date.today().month, 1))
     f_fin = st.sidebar.date_input("Fecha Fin", date.today())
     
     str_ini, str_fin = f_inicio.strftime("%Y-%m-%d"), f_fin.strftime("%Y-%m-%d")
 
-    # CARGA DE DATOS FILTRADOS
     df_proy = pd.read_sql("SELECT * FROM proyectos", conn)
     df_pagos = pd.read_sql(f"SELECT * FROM historial_pagos WHERE fecha BETWEEN '{str_ini}' AND '{str_fin}'", conn)
     df_gastos = pd.read_sql(f"SELECT * FROM gastos_varios WHERE fecha BETWEEN '{str_ini}' AND '{str_fin}'", conn)
@@ -137,44 +152,27 @@ elif choice == "Reportes y Respaldo":
     tab1, tab2, tab3 = st.tabs(["📈 Estado de Resultados", "👥 Saldos Pendientes", "📦 Respaldo"])
 
     with tab1:
-        st.subheader(f"Resumen Financiero: {f_inicio.strftime('%d/%m/%Y')} al {f_fin.strftime('%d/%m/%Y')}")
+        ingresos = df_pagos[df_pagos['tipo_movimiento'] == 'Cobro a Cliente']['monto'].sum()
+        pagos_f = df_pagos[df_pagos['tipo_movimiento'] == 'Pago a Fábrica']['monto'].sum()
+        gastos_v = df_gastos['monto'].sum()
+        beneficio = ingresos - pagos_f - gastos_v
         
-        # Cálculos del Estado de Cuenta
-        ingresos_reales = df_pagos[df_pagos['tipo_movimiento'] == 'Cobro a Cliente']['monto'].sum()
-        pagos_fabrica = df_pagos[df_pagos['tipo_movimiento'] == 'Pago a Fábrica']['monto'].sum()
-        gastos_op = df_gastos['monto'].sum()
-        beneficio_periodo = ingresos_reales - pagos_fabrica - gastos_op
-        
-        # Tarjetas de Resumen
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("INGRESOS (Cobros)", f"${ingresos_reales:,.2f}")
-        m2.metric("PAGOS A FÁBRICA", f"${pagos_fabrica:,.2f}", delta_color="inverse")
-        m3.metric("GASTOS VARIOS", f"${gastos_op:,.2f}", delta_color="inverse")
-        m4.metric("BENEFICIO NETO REAL", f"${beneficio_periodo:,.2f}", 
-                  delta=f"{((beneficio_periodo/ingresos_reales)*100 if ingresos_reales>0 else 0):,.1f}% Margen")
-
-        st.divider()
-        col_izq, col_der = st.columns(2)
-        with col_izq:
-            st.write("### Detalle de Gastos Varios")
-            st.table(df_gastos)
-        with col_der:
-            st.write("### Últimos Movimientos de Caja")
-            st.dataframe(df_pagos.sort_values(by='fecha', ascending=False), use_container_width=True)
+        m1.metric("INGRESOS", f"${ingresos:,.2f}")
+        m2.metric("PAGOS FÁBRICA", f"${pagos_f:,.2f}")
+        m3.metric("GASTOS VARIOS", f"${gastos_v:,.2f}")
+        m4.metric("BENEFICIO NETO", f"${beneficio:,.2f}")
+        st.write("### Detalle de Gastos")
+        st.table(df_gastos)
 
     with tab2:
         if not df_proy.empty:
             df_proy['Saldo Cliente'] = df_proy['precio_venta'] - df_proy['adelanto_cliente']
             df_proy['Saldo Suplidor'] = df_proy['costo_fabrica'] - df_proy['adelanto_suplidor']
-            
-            c_cobrar = df_proy.groupby('cliente')['Saldo Cliente'].sum().reset_index()
-            c_pagar = df_proy.groupby('suplidor')['Saldo Suplidor'].sum().reset_index()
-            
-            st.subheader("Cuentas por Cobrar (Clientes)")
-            st.table(c_cobrar[c_cobrar['Saldo Cliente'] > 0].style.format({"Saldo Cliente": "${:,.2f}"}))
-            
-            st.subheader("Cuentas por Pagar (Fábricas)")
-            st.table(c_pagar[c_pagar['Saldo Suplidor'] > 0].style.format({"Saldo Suplidor": "${:,.2f}"}))
+            st.subheader("Cuentas por Cobrar")
+            st.table(df_proy.groupby('cliente')['Saldo Cliente'].sum().reset_index().query('`Saldo Cliente` > 0'))
+            st.subheader("Cuentas por Pagar")
+            st.table(df_proy.groupby('suplidor')['Saldo Suplidor'].sum().reset_index().query('`Saldo Suplidor` > 0'))
         
     with tab3:
-        st.download_button("Descargar Todo el Historial (CSV)", df_proy.to_csv(index=False).encode('utf-8'), "muebleria_db.csv")
+        st.download_button("Descargar CSV", df_proy.to_csv(index=False).encode('utf-8'), "muebleria.csv")
