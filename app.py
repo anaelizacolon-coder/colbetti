@@ -77,12 +77,15 @@ elif choice == "Pagos y Abonos":
                 conn.commit()
                 st.success("✅ Dinero registrado correctamente.")
                 st.rerun()
-# Consultas filtradas
-    df_h = pd.read_sql(f"SELECT h.fecha, p.cliente, p.mueble, h.tipo_movimiento, h.monto FROM historial_pagos h JOIN proyectos p ON h.proyecto_id = p.id WHERE h.fecha BETWEEN '{s_ini}' AND '{s_fin}'", conn)
-    df_g = pd.read_sql(f"SELECT * FROM gastos_varios WHERE fecha BETWEEN '{s_ini}' AND '{s_fin}'", conn)
-    df_p = pd.read_sql("SELECT * FROM proyectos", conn)
-
-    tab_res, tab_sal = st.tabs(["📉 Resultados Periodo", "👥 Saldos Pendientes"])
+with tab_sal:
+        if not df_p.empty:
+            df_p['Por Cobrar'] = df_p['precio_venta'] - df_p['adelanto_cliente']
+            df_p['Por Pagar'] = df_p['costo_fabrica'] - df_p['adelanto_suplidor']
+            c_cli, c_sup = st.columns(2)
+            c_cli.subheader("Deudas de Clientes")
+            c_cli.table(df_p[df_p['Por Cobrar'] > 0][['cliente', 'mueble', 'Por Cobrar']].style.format({"Por Cobrar": "${:,.2f}"}))
+            c_sup.subheader("Pendiente Pago Fábrica")
+            c_sup.table(df_p[df_p['Por Pagar'] > 0][['suplidor', 'mueble', 'Por Pagar']].style.format({"Por Pagar": "${:,.2f}"}))
 
 
 # --- 4. CORREGIR DATOS ---
