@@ -22,158 +22,143 @@ c.execute('''CREATE TABLE IF NOT EXISTS gastos_varios
              (id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, concepto TEXT, monto REAL)''')
 conn.commit()
 
-st.set_page_config(page_title="Mueblería Pro v20", layout="wide")
+st.set_page_config(page_title="Mueblería Pro v21", layout="wide")
 
 # --- MENÚ LATERAL ---
-st.sidebar.title("🛠️ Panel de Control")
 menu = ["Nuevo Proyecto", "Ver / Gestionar Proyectos", "Pagos y Abonos", "✏️ Corregir Datos", "Gastos Varios", "Reportes y Respaldo"]
 choice = st.sidebar.selectbox("Seleccione una opción:", menu)
 
-# --- 1. NUEVO PROYECTO (CON SELECCIÓN DE CLIENTE/SUPLIDOR EXISTENTE) ---
+# --- 1. NUEVO PROYECTO ---
 if choice == "Nuevo Proyecto":
     st.header("📝 Registrar Nuevo Proyecto")
-    
-    # Obtener listas de clientes y suplidores únicos ya registrados
     df_p_existentes = pd.read_sql("SELECT DISTINCT cliente, suplidor FROM proyectos", conn)
     lista_clientes = sorted(df_p_existentes['cliente'].unique().tolist())
     lista_suplidores = sorted(df_p_existentes['suplidor'].unique().tolist())
-    
-    # Añadir opción para nuevos
     opciones_cli = ["+ Agregar Nuevo Cliente"] + lista_clientes
     opciones_sup = ["+ Agregar Nuevo Suplidor"] + lista_suplidores
 
     with st.form("form_nuevo", clear_on_submit=True):
         f_p = st.date_input("Fecha de Inicio:", date.today())
-        
         col1, col2 = st.columns(2)
-        
-        # Selección de Cliente
         cli_sel = col1.selectbox("Seleccionar Cliente:", opciones_cli)
-        if cli_sel == "+ Agregar Nuevo Cliente":
-            cli_final = col1.text_input("Escriba Nombre del Nuevo Cliente").upper()
-        else:
-            cli_final = cli_sel
-
-        # Selección de Suplidor
-        sup_sel = col2.selectbox("Seleccionar Suplidor (Fábrica):", opciones_sup)
-        if sup_sel == "+ Agregar Nuevo Suplidor":
-            sup_final = col2.text_input("Escriba Nombre del Nuevo Suplidor").upper()
-        else:
-            sup_final = sup_sel
-
-        st.divider()
-        mue = st.text_area("Descripción del Mueble / Proyecto")
-        
+        cli_final = col1.text_input("Nombre Nuevo Cliente (si aplica)").upper() if cli_sel == "+ Agregar Nuevo Cliente" else cli_sel
+        sup_sel = col2.selectbox("Seleccionar Suplidor:", opciones_sup)
+        sup_final = col2.text_input("Nombre Nuevo Suplidor (si aplica)").upper() if sup_sel == "+ Agregar Nuevo Suplidor" else sup_sel
+        mue = st.text_area("Descripción del Mueble")
         c1, c2 = st.columns(2)
-        p_v = c1.number_input("Precio de Venta ($)", min_value=0.0, step=100.0)
-        c_f = c2.number_input("Costo de Fábrica ($)", min_value=0.0, step=100.0)
-        
+        p_v = c1.number_input("Precio Venta ($)", min_value=0.0)
+        c_f = c2.number_input("Costo Fábrica ($)", min_value=0.0)
         if st.form_submit_button("💾 Guardar Proyecto"):
-            if cli_final and sup_final and p_v > 0:
+            if cli_final and sup_final:
                 c.execute("INSERT INTO proyectos (fecha_creacion, cliente, mueble, suplidor, precio_venta, costo_fabrica, adelanto_cliente, adelanto_suplidor, estado) VALUES (?,?,?,?,?,?,?,?,?)",
                           (f_p.strftime("%Y-%m-%d"), cli_final, mue, sup_final, p_v, c_f, 0.0, 0.0, "En Proceso"))
                 conn.commit()
-                st.success(f"✅ Proyecto para {cli_final} registrado con éxito.")
+                st.success("✅ Proyecto guardado.")
                 st.rerun()
-            else:
-                st.error("Asegúrese de ingresar nombres y que el precio sea mayor a 0.")
 
-# --- 2. VER / GESTIONAR PROYECTOS ---
+# --- 2. VER PROYECTOS ---
 elif choice == "Ver / Gestionar Proyectos":
-    st.header("📋 Listado General de Proyectos")
+    st.header("📋 Listado de Proyectos")
     df = pd.read_sql("SELECT * FROM proyectos", conn)
-    if not df.empty:
-        st.dataframe(df, use_container_width=True)
-    else:
-        st.info("No hay proyectos registrados.")
+    st.dataframe(df, use_container_width=True)
 
 # --- 3. PAGOS Y ABONOS ---
 elif choice == "Pagos y Abonos":
-    st.header("💰 Registro de Cobros y Pagos")
-    df_act = pd.read_sql("SELECT id, cliente, mueble, suplidor FROM proyectos WHERE estado != 'Entregado'", conn)
+    st.header("💰 Registrar Pago")
+    df_act = pd.read_sql("SELECT id, cliente, mueble FROM proyectos WHERE estado != 'Entregado'", conn)
     if not df_act.empty:
-        with st.form("form_pagos", clear_on_submit=True):
-            opc = [f"ID {r['id']} | {r['cliente']} | {r['mueble'][:20]}... (Fábrica: {r['suplidor']})" for _, r in df_act.iterrows()]
-            sel = st.selectbox("Seleccione el Proyecto Específico:", opc)
+        with st.form("f_pagos", clear_on_submit=True):
+            opc = [f"ID {r['id']} | {r['cliente']} | {r['mueble'][:20]}" for _, r in df_act.iterrows()]
+            sel = st.selectbox("Proyecto:", opc)
             id_p = int(sel.split(" ")[1])
-            col_t, col_f = st.columns(2)
-            tipo = col_t.radio("Tipo de Movimiento:", ["Cobro a Cliente", "Pago a Fábrica"])
-            fecha_m = col_f.date_input("Fecha:", date.today())
-            monto = st.number_input("Monto ($)", min_value=0.0)
-            if st.form_submit_button("✅ REGISTRAR MOVIMIENTO"):
-                if monto > 0:
-                    campo = "adelanto_cliente" if "Cliente" in tipo else "adelanto_suplidor"
-                    c.execute(f"UPDATE proyectos SET {campo} = {campo} + ? WHERE id = ?", (monto, id_p))
-                    c.execute("INSERT INTO historial_pagos (proyecto_id, fecha, tipo_movimiento, monto) VALUES (?,?,?,?)",
-                              (id_p, fecha_m.strftime("%Y-%m-%d"), tipo, monto))
-                    conn.commit()
-                    st.success("¡Dinero registrado!")
-                    st.rerun()
+            tipo = st.radio("Tipo:", ["Cobro a Cliente", "Pago a Fábrica"])
+            mon = st.number_input("Monto ($)", min_value=0.1)
+            if st.form_submit_button("Registrar"):
+                campo = "adelanto_cliente" if "Cliente" in tipo else "adelanto_suplidor"
+                c.execute(f"UPDATE proyectos SET {campo} = {campo} + ? WHERE id = ?", (mon, id_p))
+                c.execute("INSERT INTO historial_pagos (proyecto_id, fecha, tipo_movimiento, monto) VALUES (?,?,?,?)",
+                          (id_p, date.today().strftime("%Y-%m-%d"), tipo, mon))
+                conn.commit()
+                st.success("Registrado.")
+                st.rerun()
 
-# --- 4. CORREGIR DATOS ---
+# --- 4. CORREGIR DATOS (RESTAURADO ELIMINAR) ---
 elif choice == "✏️ Corregir Datos":
     st.header("✏️ Editor Maestro")
     df_e = pd.read_sql("SELECT * FROM proyectos", conn)
     if not df_e.empty:
-        opc = [f"ID {r['id']} - {r['cliente']}" for _, r in df_e.iterrows()]
+        opc = [f"ID {r['id']} - {r['cliente']} ({r['mueble'][:15]})" for _, r in df_e.iterrows()]
         sel = st.selectbox("Seleccione registro:", opc)
         id_p = int(sel.split(" ")[1])
         p = df_e[df_e['id'] == id_p].iloc[0]
-        with st.form("edit_final"):
+
+        with st.form("edit_form"):
+            st.subheader(f"Modificando ID: {id_p}")
             n_f = st.date_input("Fecha:", datetime.strptime(p['fecha_creacion'], "%Y-%m-%d").date())
-            n_c = st.text_input("Cliente", p['cliente'])
-            n_s = st.text_input("Suplidor", p['suplidor'])
+            col1, col2 = st.columns(2)
+            n_c = col1.text_input("Cliente", p['cliente'])
+            n_s = col2.text_input("Suplidor", p['suplidor'])
             n_m = st.text_area("Mueble", p['mueble'])
-            n_pv = st.number_input("Venta", value=float(p['precio_venta']))
-            n_cf = st.number_input("Costo", value=float(p['costo_fabrica']))
-            n_ac = st.number_input("Total Cobrado", value=float(p['adelanto_cliente']))
-            n_as = st.number_input("Total Pagado Fábrica", value=float(p['adelanto_suplidor']))
+            n_pv = col1.number_input("Precio Venta", value=float(p['precio_venta']))
+            n_cf = col2.number_input("Costo Fábrica", value=float(p['costo_fabrica']))
+            n_ac = col1.number_input("Total Cobrado", value=float(p['adelanto_cliente']))
+            n_as = col2.number_input("Total Pagado Fábrica", value=float(p['adelanto_suplidor']))
             n_est = st.selectbox("Estado", ["En Proceso", "Entregado"], index=0 if p['estado']=="En Proceso" else 1)
-            if st.form_submit_button("💾 GUARDAR CAMBIOS"):
+            
+            st.write("---")
+            col_save, col_del = st.columns(2)
+            
+            # Botón Guardar
+            if col_save.form_submit_button("💾 GUARDAR CAMBIOS"):
                 c.execute('''UPDATE proyectos SET fecha_creacion=?, cliente=?, suplidor=?, mueble=?, 
                              precio_venta=?, costo_fabrica=?, adelanto_cliente=?, adelanto_suplidor=?, estado=? WHERE id=?''',
                           (n_f.strftime("%Y-%m-%d"), n_c.upper(), n_s.upper(), n_m, n_pv, n_cf, n_ac, n_as, n_est, id_p))
                 conn.commit()
+                st.success("✅ Cambios guardados.")
                 st.rerun()
+
+            # Botón Eliminar (Dentro del formulario para que sea procesado)
+            eliminar_check = st.checkbox("Confirmar que deseo ELIMINAR permanentemente este proyecto")
+            if col_del.form_submit_button("🗑️ ELIMINAR AHORA"):
+                if eliminar_check:
+                    c.execute("DELETE FROM proyectos WHERE id=?", (id_p,))
+                    c.execute("DELETE FROM historial_pagos WHERE proyecto_id=?", (id_p,))
+                    conn.commit()
+                    st.warning(f"⚠️ Proyecto {id_p} eliminado.")
+                    st.rerun()
+                else:
+                    st.error("Debes marcar la casilla de confirmación para eliminar.")
 
 # --- 5. GASTOS VARIOS ---
 elif choice == "Gastos Varios":
-    st.header("⛽ Gastos Operativos")
-    with st.form("g_v", clear_on_submit=True):
+    st.header("⛽ Gastos")
+    with st.form("g_v"):
         con = st.text_input("Concepto")
-        mon = st.number_input("Monto ($)", min_value=0.0)
-        fec = st.date_input("Fecha:", date.today())
-        if st.form_submit_button("Registrar Gasto"):
+        mon = st.number_input("Monto", min_value=0.0)
+        fec = st.date_input("Fecha", date.today())
+        if st.form_submit_button("Guardar"):
             c.execute("INSERT INTO gastos_varios (fecha, concepto, monto) VALUES (?,?,?)", (fec.strftime("%Y-%m-%d"), con, mon))
             conn.commit()
-            st.success("Gasto guardado.")
-            st.rerun()
+            st.success("Gasto anotado.")
 
-# --- 6. REPORTES Y RESPALDO ---
+# --- 6. REPORTES ---
 elif choice == "Reportes y Respaldo":
     st.header("📊 Inteligencia Financiera")
-    st.sidebar.subheader("Rango de Fechas")
+    st.sidebar.subheader("Filtros")
     f_ini = st.sidebar.date_input("Desde", date(date.today().year, date.today().month, 1))
     f_fin = st.sidebar.date_input("Hasta", date.today())
-    s_ini, s_fin = f_ini.strftime("%Y-%m-%d"), f_fin.strftime("%Y-%m-%d")
-    df_h = pd.read_sql(f"SELECT h.fecha, p.cliente, p.mueble, p.suplidor, h.tipo_movimiento, h.monto FROM historial_pagos h JOIN proyectos p ON h.proyecto_id = p.id WHERE h.fecha BETWEEN '{s_ini}' AND '{s_fin}'", conn)
-    df_g = pd.read_sql(f"SELECT * FROM gastos_varios WHERE fecha BETWEEN '{s_ini}' AND '{s_fin}'", conn)
+    df_h = pd.read_sql(f"SELECT h.fecha, p.cliente, p.mueble, h.tipo_movimiento, h.monto FROM historial_pagos h JOIN proyectos p ON h.proyecto_id = p.id WHERE h.fecha BETWEEN '{f_ini}' AND '{f_fin}'", conn)
+    df_g = pd.read_sql(f"SELECT * FROM gastos_varios WHERE fecha BETWEEN '{f_ini}' AND '{f_fin}'", conn)
     df_p = pd.read_sql("SELECT * FROM proyectos", conn)
-    t1, t2, t3 = st.tabs(["📈 Resultados", "👥 Saldos", "📦 Respaldo"])
+    
+    t1, t2 = st.tabs(["Resultados", "Saldos"])
     with t1:
         ing = df_h[df_h['tipo_movimiento'] == 'Cobro a Cliente']['monto'].sum() or 0.0
         p_f = df_h[df_h['tipo_movimiento'] == 'Pago a Fábrica']['monto'].sum() or 0.0
         gas = df_g['monto'].sum() or 0.0
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("INGRESOS", f"${ing:,.2f}")
-        c2.metric("A FÁBRICA", f"${p_f:,.2f}")
-        c3.metric("GASTOS", f"${gas:,.2f}")
-        c4.metric("UTILIDAD", f"${(ing - p_f - gas):,.2f}")
-        st.dataframe(df_h, use_container_width=True)
+        st.metric("Utilidad Neta", f"${(ing - p_f - gas):,.2f}")
+        st.dataframe(df_h)
     with t2:
         if not df_p.empty:
-            df_p['Por Cobrar'] = df_p['precio_venta'] - df_p['adelanto_cliente']
-            df_p['Por Pagar'] = df_p['costo_fabrica'] - df_p['adelanto_suplidor']
-            st.table(df_p[df_p['Por Cobrar'] > 0][['cliente', 'mueble', 'Por Cobrar']])
-    with t3:
-        st.download_button("Descargar CSV", df_p.to_csv(index=False).encode('utf-8'), "muebleria.csv")
+            df_p['Deuda'] = df_p['precio_venta'] - df_p['adelanto_cliente']
+            st.table(df_p[df_p['Deuda'] > 0][['cliente', 'mueble', 'Deuda']])
