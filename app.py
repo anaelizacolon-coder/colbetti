@@ -3,13 +3,14 @@ import pandas as pd
 import sqlite3
 from datetime import datetime, date
 
-# 1. CONEXIÓN Y ESTRUCTURA DE TABLAS
+# 1. CONEXIÓN SEGURA
 def get_connection():
     return sqlite3.connect('muebles_negocio.db', check_same_thread=False)
 
 conn = get_connection()
 c = conn.cursor()
 
+# ASEGURAR ESTRUCTURA
 c.execute('''CREATE TABLE IF NOT EXISTS proyectos 
              (id INTEGER PRIMARY KEY AUTOINCREMENT, fecha_creacion TEXT, cliente TEXT, 
               mueble TEXT, suplidor TEXT, precio_venta REAL, costo_fabrica REAL, 
@@ -23,174 +24,151 @@ c.execute('''CREATE TABLE IF NOT EXISTS gastos_varios
              (id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, concepto TEXT, monto REAL)''')
 conn.commit()
 
-st.set_page_config(page_title="Mueblería Pro - Control de Fechas", layout="wide")
+st.set_page_config(page_title="Mueblería Pro v14", layout="wide")
 
-# --- MENÚ LATERAL ---
-st.sidebar.title("🛠️ Gestión de Negocio")
+# --- MENÚ ---
 menu = ["Nuevo Proyecto", "Ver / Gestionar Proyectos", "Pagos y Abonos", "✏️ Corregir Datos", "Gastos Varios", "Reportes y Respaldo"]
-choice = st.sidebar.selectbox("Seleccione una opción", menu)
+choice = st.sidebar.selectbox("Menú Principal", menu)
 
-# --- OPCIÓN 1: NUEVO PROYECTO (CON FECHA EDITABLE) ---
+# --- 1. NUEVO PROYECTO ---
 if choice == "Nuevo Proyecto":
-    st.header("📝 Registrar Nuevo Proyecto")
-    with st.form("form_nuevo", clear_on_submit=True):
-        col_f1, col_f2 = st.columns(2)
-        fecha_proy = col_f1.date_input("Fecha de Inicio del Proyecto:", date.today())
-        
+    st.header("📝 Nuevo Proyecto")
+    with st.form("f_n", clear_on_submit=True):
+        f_p = st.date_input("Fecha:", date.today())
         col1, col2 = st.columns(2)
-        cliente = col1.text_input("Nombre del Cliente").upper()
-        suplidor = col2.text_input("Nombre del Suplidor (Fábrica)").upper()
-        
-        mueble = st.text_area("Descripción del Mueble / Materiales")
-        
-        c1, c2 = st.columns(2)
-        p_venta = c1.number_input("Precio de Venta ($)", min_value=0.0)
-        c_fabrica = c2.number_input("Costo de Fábrica ($)", min_value=0.0)
-        
-        if st.form_submit_button("Guardar Proyecto"):
-            if cliente and suplidor:
-                # Guardamos con la fecha seleccionada por el usuario
-                f_str = fecha_proy.strftime("%Y-%m-%d")
+        cli = col1.text_input("Cliente").upper()
+        sup = col2.text_input("Suplidor").upper()
+        mue = st.text_area("Descripción")
+        p_v = st.number_input("Precio Venta", min_value=0.0)
+        c_f = st.number_input("Costo Fábrica", min_value=0.0)
+        if st.form_submit_button("Guardar"):
+            if cli and sup:
                 c.execute("INSERT INTO proyectos (fecha_creacion, cliente, mueble, suplidor, precio_venta, costo_fabrica, adelanto_cliente, adelanto_suplidor, estado) VALUES (?,?,?,?,?,?,?,?,?)",
-                          (f_str, cliente, mueble, suplidor, p_venta, c_fabrica, 0.0, 0.0, "En Proceso"))
+                          (f_p.strftime("%Y-%m-%d"), cli, mue, sup, p_v, c_f, 0.0, 0.0, "En Proceso"))
                 conn.commit()
-                st.success(f"✅ Proyecto registrado con fecha {f_str}")
+                st.success("Proyecto Guardado")
 
-# --- OPCIÓN 2: VER / GESTIONAR ---
+# --- 2. VER PROYECTOS ---
 elif choice == "Ver / Gestionar Proyectos":
-    st.header("📋 Todos los Proyectos")
-    df_p = pd.read_sql("SELECT * FROM proyectos", conn)
-    if not df_p.empty:
-        st.dataframe(df_p, use_container_width=True)
-    else:
-        st.info("No hay proyectos registrados.")
-
-# --- OPCIÓN 3: PAGOS Y ABONOS (CON FECHA EDITABLE) ---
-elif choice == "Pagos y Abonos":
-    st.header("💰 Registrar Movimiento de Dinero")
-    df = pd.read_sql("SELECT id, cliente, mueble FROM proyectos WHERE estado != 'Entregado'", conn)
-    if not df.empty:
-        opciones = [f"ID {row['id']} - {row['cliente']}" for _, row in df.iterrows()]
-        selec = st.selectbox("Seleccione Proyecto:", opciones)
-        id_p = int(selec.split(" ")[1])
-        
-        col_t, col_f = st.columns(2)
-        tipo = col_t.radio("Tipo de Movimiento:", ["Cobro a Cliente", "Pago a Fábrica"])
-        fecha_mov = col_f.date_input("Fecha en que se realizó el movimiento:", date.today())
-        
-        monto = st.number_input("Monto ($)", min_value=0.0)
-        
-        if st.button("Registrar en Historial"):
-            f_mov_str = fecha_mov.strftime("%Y-%m-%d")
-            campo = "adelanto_cliente" if "Cliente" in tipo else "adelanto_suplidor"
-            
-            # Actualizamos el saldo acumulado
-            c.execute(f"UPDATE proyectos SET {campo} = {campo} + ? WHERE id = ?", (monto, id_p))
-            # Registramos la transacción con la fecha elegida
-            c.execute("INSERT INTO historial_pagos (proyecto_id, fecha, tipo_movimiento, monto) VALUES (?,?,?,?)",
-                      (id_p, f_mov_str, tipo, monto))
-            conn.commit()
-            st.success(f"✅ {tipo} por ${monto:,.2f} registrado con fecha {f_mov_str}.")
-    else:
-        st.warning("No hay proyectos activos para recibir pagos.")
-
-# --- OPCIÓN 4: CORREGIR DATOS ---
-elif choice == "✏️ Corregir Datos":
-    st.header("✏️ Editor Maestro y Eliminación")
+    st.header("📋 Listado General")
     df = pd.read_sql("SELECT * FROM proyectos", conn)
-    if not df.empty:
-        opciones = [f"ID {row['id']} - {row['cliente']}" for _, row in df.iterrows()]
-        selec = st.selectbox("Seleccione registro:", opciones)
-        id_p = int(selec.split(" ")[1])
-        p = df[df['id'] == id_p].iloc[0]
-        
-        with st.form("edit_maestro"):
-            n_cliente = st.text_input("Cliente", value=str(p['cliente']))
-            n_mueble = st.text_area("Mueble", value=str(p['mueble']))
-            n_suplidor = st.text_input("Suplidor", value=str(p['suplidor']))
-            c1, c2 = st.columns(2)
-            n_pv = c1.number_input("Precio Venta", value=float(p['precio_venta']))
-            n_cf = c2.number_input("Costo Fábrica", value=float(p['costo_fabrica']))
-            n_ac = c1.number_input("Adelantos Cliente", value=float(p['adelanto_cliente']))
-            n_as = c2.number_input("Pagos Fábrica", value=float(p['adelanto_suplidor']))
-            n_est = st.selectbox("Estado", ["En Proceso", "Entregado"], index=0 if p['estado']=="En Proceso" else 1)
-            
-            col_save, col_del = st.columns([1,1])
-            if col_save.form_submit_button("💾 GUARDAR CAMBIOS"):
-                c.execute('''UPDATE proyectos SET cliente=?, mueble=?, suplidor=?, precio_venta=?, 
-                             costo_fabrica=?, adelanto_cliente=?, adelanto_suplidor=?, estado=? WHERE id=?''',
-                          (n_cliente.upper(), n_mueble, n_suplidor.upper(), n_pv, n_cf, n_ac, n_as, n_est, id_p))
-                conn.commit()
-                st.success("✅ Registro actualizado.")
-                st.rerun()
+    st.dataframe(df, use_container_width=True)
 
-            if col_del.form_submit_button("🗑️ ELIMINAR PROYECTO"):
+# --- 3. PAGOS Y ABONOS (ESTO ALIMENTA EL REPORTE) ---
+elif choice == "Pagos y Abonos":
+    st.header("💰 Registrar Cobro o Pago")
+    df_act = pd.read_sql("SELECT id, cliente FROM proyectos WHERE estado != 'Entregado'", conn)
+    if not df_act.empty:
+        opc = [f"ID {r['id']} - {r['cliente']}" for _, r in df_act.iterrows()]
+        sel = st.selectbox("Proyecto:", opc)
+        id_p = int(sel.split(" ")[1])
+        t_m = st.radio("Movimiento:", ["Cobro a Cliente", "Pago a Fábrica"])
+        f_m = st.date_input("Fecha Movimiento:", date.today())
+        mon = st.number_input("Monto", min_value=0.0)
+        if st.button("Registrar Pago"):
+            campo = "adelanto_cliente" if "Cliente" in t_m else "adelanto_suplidor"
+            c.execute(f"UPDATE proyectos SET {campo} = {campo} + ? WHERE id = ?", (mon, id_p))
+            c.execute("INSERT INTO historial_pagos (proyecto_id, fecha, tipo_movimiento, monto) VALUES (?,?,?,?)",
+                      (id_p, f_m.strftime("%Y-%m-%d"), t_m, mon))
+            conn.commit()
+            st.success("Transacción registrada con éxito")
+    else:
+        st.info("No hay proyectos activos.")
+
+# --- 4. CORREGIR ---
+elif choice == "✏️ Corregir Datos":
+    st.header("✏️ Editor Maestro")
+    df_e = pd.read_sql("SELECT * FROM proyectos", conn)
+    if not df_e.empty:
+        opc = [f"ID {r['id']} - {r['cliente']}" for _, r in df_e.iterrows()]
+        sel = st.selectbox("Seleccione:", opc)
+        id_p = int(sel.split(" ")[1])
+        p = df_e[df_e['id'] == id_p].iloc[0]
+        with st.form("e_m"):
+            n_c = st.text_input("Cliente", p['cliente'])
+            n_s = st.text_input("Suplidor", p['suplidor'])
+            n_pv = st.number_input("Venta", value=float(p['precio_venta']))
+            n_cf = st.number_input("Costo", value=float(p['costo_fabrica']))
+            n_ac = st.number_input("Cobrado", value=float(p['adelanto_cliente']))
+            n_as = st.number_input("Pagado Fábrica", value=float(p['adelanto_suplidor']))
+            col_a, col_b = st.columns(2)
+            if col_a.form_submit_button("Guardar"):
+                c.execute("UPDATE proyectos SET cliente=?, suplidor=?, precio_venta=?, costo_fabrica=?, adelanto_cliente=?, adelanto_suplidor=? WHERE id=?",
+                          (n_c.upper(), n_s.upper(), n_pv, n_cf, n_ac, n_as, id_p))
+                conn.commit()
+                st.rerun()
+            if col_b.form_submit_button("ELIMINAR"):
                 c.execute("DELETE FROM proyectos WHERE id=?", (id_p,))
-                c.execute("DELETE FROM historial_pagos WHERE proyecto_id=?", (id_p,))
                 conn.commit()
-                st.warning(f"⚠️ Proyecto {id_p} eliminado.")
                 st.rerun()
 
-# --- OPCIÓN 5: GASTOS VARIOS ---
+# --- 5. GASTOS ---
 elif choice == "Gastos Varios":
-    st.header("⛽ Gastos Operativos")
-    with st.form("g"):
-        col_a, col_b = st.columns(2)
-        con = col_a.text_input("Concepto")
-        mon = col_b.number_input("Monto ($)", min_value=0.0)
-        fec = st.date_input("Fecha:", date.today())
-        if st.form_submit_button("Registrar Gasto"):
+    st.header("⛽ Gastos")
+    with st.form("g_v"):
+        con = st.text_input("Concepto")
+        mon = st.number_input("Monto", min_value=0.0)
+        fec = st.date_input("Fecha", date.today())
+        if st.form_submit_button("Guardar Gasto"):
             c.execute("INSERT INTO gastos_varios (fecha, concepto, monto) VALUES (?,?,?)", (fec.strftime("%Y-%m-%d"), con, mon))
             conn.commit()
-            st.success("Gasto guardado.")
+            st.success("Gasto anotado")
 
-# --- OPCIÓN 6: REPORTES ---
+# --- 6. REPORTES (REVISIÓN DE FILTROS) ---
 elif choice == "Reportes y Respaldo":
     st.header("📊 Inteligencia Financiera")
-    st.sidebar.divider()
-    f_inicio = st.sidebar.date_input("Fecha Inicio", date(date.today().year, date.today().month, 1))
-    f_fin = st.sidebar.date_input("Fecha Fin", date.today())
     
-    str_ini, str_fin = f_inicio.strftime("%Y-%m-%d"), f_fin.strftime("%Y-%m-%d")
+    # Rango de fechas dinámico
+    st.sidebar.subheader("Periodo del Reporte")
+    f_ini = st.sidebar.date_input("Desde", date(date.today().year, date.today().month, 1))
+    f_fin = st.sidebar.date_input("Hasta", date.today())
+    
+    s_ini, s_fin = f_ini.strftime("%Y-%m-%d"), f_fin.strftime("%Y-%m-%d")
 
-    df_proy = pd.read_sql("SELECT * FROM proyectos", conn)
-    df_pagos = pd.read_sql(f"SELECT * FROM historial_pagos WHERE fecha BETWEEN '{str_ini}' AND '{str_fin}'", conn)
-    df_gastos = pd.read_sql(f"SELECT * FROM gastos_varios WHERE fecha BETWEEN '{str_ini}' AND '{str_fin}'", conn)
+    # CARGA DE DATOS SIN FILTROS PARA VALIDAR
+    df_h = pd.read_sql(f"SELECT * FROM historial_pagos WHERE fecha BETWEEN '{s_ini}' AND '{s_fin}'", conn)
+    df_g = pd.read_sql(f"SELECT * FROM gastos_varios WHERE fecha BETWEEN '{s_ini}' AND '{s_fin}'", conn)
+    df_p = pd.read_sql("SELECT * FROM proyectos", conn)
 
-    tab1, tab2, tab3 = st.tabs(["📈 Estado de Resultados", "👥 Saldos Pendientes", "📦 Respaldo"])
+    t1, t2, t3 = st.tabs(["📈 Estado de Resultados", "👥 Saldos", "📦 Respaldo"])
 
-    with tab1:
-        ingresos = df_pagos[df_pagos['tipo_movimiento'] == 'Cobro a Cliente']['monto'].sum()
-        pagos_f = df_pagos[df_pagos['tipo_movimiento'] == 'Pago a Fábrica']['monto'].sum()
-        gastos_v = df_gastos['monto'].sum()
-        beneficio = ingresos - pagos_f - gastos_v
-        
+    with t1:
+        # Cálculos Manuales para asegurar que no haya nulos
+        ingresos = df_h[df_h['tipo_movimiento'] == 'Cobro a Cliente']['monto'].sum() or 0.0
+        egresos_f = df_h[df_h['tipo_movimiento'] == 'Pago a Fábrica']['monto'].sum() or 0.0
+        gastos_v = df_g['monto'].sum() or 0.0
+        beneficio = ingresos - egresos_f - gastos_v
+
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("INGRESOS", f"${ingresos:,.2f}")
-        m2.metric("PAGOS FÁBRICA", f"${pagos_f:,.2f}")
+        m1.metric("INGRESOS (Cobros)", f"${ingresos:,.2f}")
+        m2.metric("PAGOS FÁBRICA", f"${egresos_f:,.2f}")
         m3.metric("GASTOS VARIOS", f"${gastos_v:,.2f}")
         m4.metric("BENEFICIO NETO", f"${beneficio:,.2f}")
-        
-        st.write("### Detalle de Gastos Varios")
-        if not df_gastos.empty:
-            st.table(df_gastos.style.format({"monto": "${:,.2f}"}))
-        
-        st.write("### Desglose de Pagos/Cobros en este periodo")
-        if not df_pagos.empty:
-            st.dataframe(df_pagos.sort_values(by='fecha', ascending=False), use_container_width=True)
 
-    with tab2:
-        if not df_proy.empty:
-            df_proy['Saldo Cliente'] = df_proy['precio_venta'] - df_proy['adelanto_cliente']
-            df_proy['Saldo Suplidor'] = df_proy['costo_fabrica'] - df_proy['adelanto_suplidor']
+        st.divider()
+        if df_h.empty and df_g.empty:
+            st.warning(f"No hay movimientos registrados entre {s_ini} y {s_fin}. Prueba ampliando el rango de fechas en la izquierda.")
+        else:
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.write("**Desglose de Movimientos**")
+                st.dataframe(df_h.style.format({"monto": "${:,.2f}"}), use_container_width=True)
+            with col_b:
+                st.write("**Desglose de Gastos**")
+                st.dataframe(df_g.style.format({"monto": "${:,.2f}"}), use_container_width=True)
+
+    with t2:
+        if not df_p.empty:
+            df_p['Por Cobrar'] = df_p['precio_venta'] - df_p['adelanto_cliente']
+            df_p['Por Pagar'] = df_p['costo_fabrica'] - df_p['adelanto_suplidor']
             
-            st.subheader("Cuentas por Cobrar (Clientes)")
-            c_cobrar = df_proy.groupby('cliente')['Saldo Cliente'].sum().reset_index().query('`Saldo Cliente` > 0')
-            st.table(c_cobrar.style.format({"Saldo Cliente": "${:,.2f}"}))
+            st.subheader("Cuentas por Cobrar")
+            cc = df_p.groupby('cliente')['Por Cobrar'].sum().reset_index().query('`Por Cobrar` > 0')
+            st.table(cc.style.format({"Por Cobrar": "${:,.2f}"}))
+            
+            st.subheader("Cuentas por Pagar")
+            cp = df_p.groupby('suplidor')['Por Pagar'].sum().reset_index().query('`Por Pagar` > 0')
+            st.table(cp.style.format({"Por Pagar": "${:,.2f}"}))
 
-            st.subheader("Cuentas por Pagar (Fábricas)")
-            c_pagar = df_proy.groupby('suplidor')['Saldo Suplidor'].sum().reset_index().query('`Saldo Suplidor` > 0')
-            st.table(c_pagar.style.format({"Saldo Suplidor": "${:,.2f}"}))
-        
-    with tab3:
-        st.download_button("Descargar Respaldo Total (CSV)", df_proy.to_csv(index=False).encode('utf-8'), "muebleria.csv")
+    with t3:
+        st.download_button("Descargar Excel (CSV)", df_p.to_csv(index=False).encode('utf-8'), "muebles.csv")
