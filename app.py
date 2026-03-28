@@ -146,4 +146,41 @@ elif choice == "Gastos Varios":
 # --- 6. REPORTES Y RESPALDO ---
 elif choice == "Reportes y Respaldo":
     st.header("📊 Inteligencia Financiera")
-    st.
+    st.sidebar.subheader("Rango de Fechas")
+    f_ini = st.sidebar.date_input("Desde", date(date.today().year, date.today().month, 1))
+    f_fin = st.sidebar.date_input("Hasta", date.today())
+    
+    s_ini, s_fin = f_ini.strftime("%Y-%m-%d"), f_fin.strftime("%Y-%m-%d")
+
+    df_h = pd.read_sql(f"SELECT h.fecha, p.cliente, p.mueble, p.suplidor, h.tipo_movimiento, h.monto FROM historial_pagos h JOIN proyectos p ON h.proyecto_id = p.id WHERE h.fecha BETWEEN '{s_ini}' AND '{s_fin}'", conn)
+    df_g = pd.read_sql(f"SELECT * FROM gastos_varios WHERE fecha BETWEEN '{s_ini}' AND '{s_fin}'", conn)
+    df_p = pd.read_sql("SELECT * FROM proyectos", conn)
+
+    t1, t2, t3 = st.tabs(["📈 Resultados", "👥 Saldos Pendientes", "📦 Respaldo"])
+
+    with t1:
+        ing = df_h[df_h['tipo_movimiento'] == 'Cobro a Cliente']['monto'].sum() or 0.0
+        p_f = df_h[df_h['tipo_movimiento'] == 'Pago a Fábrica']['monto'].sum() or 0.0
+        gas = df_g['monto'].sum() or 0.0
+        
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("INGRESOS", f"${ing:,.2f}")
+        c2.metric("A FÁBRICA", f"${p_f:,.2f}")
+        c3.metric("GASTOS", f"${gas:,.2f}")
+        c4.metric("UTILIDAD", f"${(ing - p_f - gas):,.2f}")
+        
+        st.write("### Detalle de Movimientos en este periodo")
+        st.dataframe(df_h.style.format({"monto": "${:,.2f}"}), use_container_width=True)
+
+    with t2:
+        if not df_p.empty:
+            df_p['Por Cobrar'] = df_p['precio_venta'] - df_p['adelanto_cliente']
+            df_p['Por Pagar'] = df_p['costo_fabrica'] - df_p['adelanto_suplidor']
+            col_a, col_b = st.columns(2)
+            col_a.subheader("Cobros a Clientes")
+            col_a.table(df_p[df_p['Por Cobrar'] > 0][['cliente', 'mueble', 'Por Cobrar']].style.format({"Por Cobrar": "${:,.2f}"}))
+            col_b.subheader("Pagos a Fábricas")
+            col_b.table(df_p[df_p['Por Pagar'] > 0][['suplidor', 'mueble', 'Por Pagar']].style.format({"Por Pagar": "${:,.2f}"}))
+
+    with t3:
+        st.download_button("Descargar Todo (CSV)", df_p.to_csv(index=False).encode('utf-8'), "muebleria_pro.csv")
